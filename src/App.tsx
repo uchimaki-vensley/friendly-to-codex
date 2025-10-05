@@ -48,7 +48,11 @@ export default function App() {
   // FX objects
   const lowRingsRef = useRef<THREE.Mesh[]>([]);
   const sparksRef = useRef<THREE.Points | null>(null);
-  const ringBurstRef = useRef<number>(0);
+  const beaconRef = useRef<THREE.InstancedMesh | null>(null);
+  const scanPosRef = useRef<number>(0);
+  const scanAmpRef = useRef<number>(0);
+  const scanDirRef = useRef<number>(1);
+  
 
   // Audio/WebAudio
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -193,8 +197,7 @@ export default function App() {
 
       if (sparksRef.current) {
         const nowSec = now * 0.001;
-        sparksRef.current.rotation.y += 0.0025;
-        sparksRef.current.position.y = 0.5 + Math.sin(nowSec * 1.8) * 0.3;
+        
       }
 
       // decay pulse and drive post fx
@@ -308,6 +311,26 @@ export default function App() {
     const gridHelper = new THREE.GridHelper(N*spacing + 6, N, palette.city, palette.city);
     gridHelper.name = "__grid"; (gridHelper.material as THREE.LineBasicMaterial).transparent = true; (gridHelper.material as THREE.LineBasicMaterial).opacity = 0.25;
     scene.add(gridHelper);
+
+    // Rooftop beacons (instanced)
+    const beaconGeo = new THREE.CylinderGeometry(0.14, 0.36, 0.7, 12, 1, true);
+    const beaconMat = new THREE.MeshBasicMaterial({
+      color: themes[theme].high,
+      transparent: true,
+      opacity: 0.0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const beacons = new THREE.InstancedMesh(beaconGeo, beaconMat, N*N);
+    beacons.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const bd = new THREE.Object3D();
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++) {
+      const id = i*N + j;
+      bd.position.set(i*spacing - offset, 1.0, j*spacing - offset);
+      bd.scale.set(0.6, 0.6, 0.6); bd.updateMatrix();
+      beacons.setMatrixAt(id, bd.matrix);
+    }
+    beaconRef.current = beacons; scene.add(beacons);
   }
 
   function rebuildCity(N: number) {
@@ -317,6 +340,12 @@ export default function App() {
       cityRef.current.geometry.dispose();
       (cityRef.current.material as THREE.MeshStandardMaterial).dispose();
       cityRef.current = null;
+    }
+    if (beaconRef.current) {
+      scene.remove(beaconRef.current);
+      beaconRef.current.geometry.dispose();
+      (beaconRef.current.material as THREE.Material).dispose?.();
+      beaconRef.current = null;
     }
     const oldGrid = scene.getObjectByName("__grid"); if (oldGrid) scene.remove(oldGrid);
     buildCity(N);
@@ -348,14 +377,21 @@ export default function App() {
 
       const i = Math.floor(idx / N); const j = idx % N;
       const spacing = 1.4; const offset = (N - 1) * spacing * 0.5;
-      dummy.position.set(i*spacing - offset, next/2, j*spacing - offset);
+      // scanline boost across X
+      const u = (i/(N-1))*2 - 1; // -1..1
+      const dscan = Math.abs(u - scanPosRef.current);
+      const scan = Math.exp(- (dscan*dscan) / (2*0.12*0.12)) * scanAmpRef.current;
+      const hBoost = scan * 2.4;
+      dummy.position.set(i*spacing - offset, (next + hBoost)/2, j*spacing - offset);
       dummy.scale.set(1, next, 1); dummy.updateMatrix();
       mesh.setMatrixAt(idx, dummy.matrix);
 
       const t = Math.min(1, (next - 0.5) / (14 * sensitivity));
       const col = new THREE.Color();
       col.lerpColors(palette.low, palette.mid, Math.min(1, t*1.2));
-      col.lerp(palette.high, t*t);
+      const tt = Math.min(1, t*1.15);
+      col.lerp(palette.high, tt*tt);
+      if (scan > 0.01) col.lerp(new THREE.Color('#ffffff'), Math.min(0.6, scan*0.8));
       mesh.setColorAt?.(idx, col);
     }
     mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -374,38 +410,58 @@ export default function App() {
     const st = beatState.current;
     st.avg = st.avg * 0.995 + low * 0.005; // slow moving average
     st.ema = st.ema * 0.8 + low * 0.2;    // short EMA
-    const over = st.ema > Math.max(0.12, st.avg * 1.35);
+    const over = st.ema > Math.max(0.08, st.avg * 1.15);
     if (st.cool <= 0 && over) {
-      st.cool = 12; // frames cooldown (stricter)
+      st.cool = 10; // frames cooldown
       if (pulse) pulse.v = Math.min(1, (pulse.v || 0) + 0.9);
-      ringBurstRef.current = Math.min(1, ringBurstRef.current + 1);
       // city gentle pop
       mesh.scale.setScalar(1 + 0.015);
       setTimeout(() => mesh.scale.setScalar(1), 50);
+    // update scanline wave state
+    if (over) { scanAmpRef.current = 1; scanDirRef.current *= -1; }
+    scanPosRef.current += 0.35 * (1/60);
+    if (scanPosRef.current > 1.2) scanPosRef.current = -1.2;
+    if (scanPosRef.current < -1.2) scanPosRef.current = 1.2;
+    scanAmpRef.current *= 0.92;
     } else {
       st.cool = Math.max(0, st.cool - 1);
     }
 
-    // Low-band rings: burst-based
-    ringBurstRef.current *= 0.86; // decay
+    // Low-band rings
     if (lowRingsRef.current.length) {
       lowRingsRef.current.forEach((r, i) => {
-        const burst = ringBurstRef.current;
-        const s = 1 + (low * 0.4 + burst) * (3.2 + i*1.4);
+        const s = 1 + low * (2.5 + i*1.2);
         r.scale.setScalar(s);
         const m = r.material as THREE.MeshBasicMaterial;
-        m.opacity = Math.max(0, Math.min(0.6, (low * 0.3 + burst) * (0.8 - i*0.12)));
-        m.color.copy(themes[theme].mid).lerp(themes[theme].high, Math.min(1, low*0.4 + burst*0.8));
+        m.opacity = Math.max(0, Math.min(0.35, low * (0.6 - i*0.1)));
+        m.color.copy(themes[theme].mid).lerp(themes[theme].high, low*0.6);
       });
     }
-    // High-band sparks: brighter, larger, bit of randomness
+    // High-band sparks
     if (sparksRef.current) {
       const pm = sparksRef.current.material as THREE.PointsMaterial;
-      const sparkle = Math.pow(high, 0.9) * 1.6 + (Math.random()*0.25)*high + (pulse?.v || 0)*0.2;
-      pm.opacity = Math.max(0, Math.min(1, sparkle));
-      pm.size = 0.08 + high * 0.35 + (pulse?.v || 0) * 0.05;
-      const c = (pm.color as THREE.Color);
-      c.lerpColors(themes[theme].high, new THREE.Color('#ffffff'), Math.min(0.7, high*0.8));
+      pm.opacity = Math.min(0.9, high * 1.3);
+      pm.size = 0.05 + high * 0.2;
+    }
+
+    // Rooftop beacons update
+    if (beaconRef.current) {
+      const bmat = beaconRef.current.material as THREE.MeshBasicMaterial;
+      const bd = new THREE.Object3D();
+      const spacing = 1.4; const offset = (gridSize - 1) * spacing * 0.5;
+      const glow = Math.min(1, (mid*0.8 + high*1.2 + (pulse?.v||0)*0.6));
+      bmat.opacity = Math.min(0.85, glow);
+      bmat.color.copy(themes[theme].high).lerp(new THREE.Color('#ffffff'), Math.min(0.5, high*0.7));
+      for (let i=0;i<gridSize;i++) for (let j=0;j<gridSize;j++) {
+        const id = i*gridSize + j;
+        const h = smoothRef.current ? smoothRef.current[id] : 1;
+        const x = i*spacing - offset; const z = j*spacing - offset;
+        const s = 0.6 + glow * 0.8;
+        bd.position.set(x, h + 0.35, z);
+        bd.scale.set(0.6, s, 0.6); bd.updateMatrix();
+        beaconRef.current.setMatrixAt(id, bd.matrix);
+      }
+      beaconRef.current.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -733,3 +789,4 @@ export default function App() {
     </div>
   );
 }
+
