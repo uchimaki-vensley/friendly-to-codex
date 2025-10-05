@@ -45,6 +45,9 @@ export default function App() {
   const afterimageRef = useRef<AfterimagePass | null>(null);
   // Ground reflector
   const reflectorRef = useRef<THREE.Mesh | null>(null);
+  // FX objects
+  const lowRingsRef = useRef<THREE.Mesh[]>([]);
+  const sparksRef = useRef<THREE.Points | null>(null);
 
   // Audio/WebAudio
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -69,6 +72,14 @@ export default function App() {
   const [errMsg, setErrMsg] = useState<string>("");
   const [autoCam, setAutoCam] = useState(true);
   const [cinematic, setCinematic] = useState(true);
+  // Tone controls
+  const [exposure, setExposure] = useState(1.25);
+  const [bloomStrength, setBloomStrength] = useState(0.95);
+  const [bloomThreshold, setBloomThreshold] = useState(0.6);
+  const [afterimageDamp, setAfterimageDamp] = useState(0.86);
+  // Camera mode
+  const camModeRef = useRef<"orbit"|"dolly"|"street">("orbit");
+  const camSwitchRef = useRef<number>(0);
 
   // Optional: music-metadata-browser (lazy import; no top-level await)
   const mmRef = useRef<any>(null);
@@ -109,6 +120,7 @@ export default function App() {
 
     applyTheme(theme);
     buildCity(gridSize);
+    setupFX();
 
     // Post-processing pipeline
     const composer = new EffectComposer(renderer);
@@ -148,12 +160,31 @@ export default function App() {
 
       if (autoCam && cameraRef.current && sceneRef.current) {
         const cam = cameraRef.current;
-        const r = 26 + Math.sin(now * 0.0003) * 3;
-        const yaw = now * 0.00025;
-        cam.position.x = Math.cos(yaw) * r;
-        cam.position.z = Math.sin(yaw) * r;
-        cam.position.y = 18 + Math.sin(now * 0.00042) * 3;
-        cam.lookAt(0, 6, 0);
+        camSwitchRef.current += dt;
+        if (camSwitchRef.current > 7) { // switch every ~7s
+          camSwitchRef.current = 0;
+          camModeRef.current = camModeRef.current === "orbit" ? "dolly" : camModeRef.current === "dolly" ? "street" : "orbit";
+        }
+        const mode = camModeRef.current;
+        const t = now * 0.001;
+        if (mode === "orbit") {
+          const r = 26 + Math.sin(t * 0.3) * 3;
+          const yaw = t * 0.25;
+          cam.position.x = Math.cos(yaw) * r;
+          cam.position.z = Math.sin(yaw) * r;
+          cam.position.y = 18 + Math.sin(t * 0.42) * 3;
+          cam.lookAt(0, 6, 0);
+        } else if (mode === "dolly") {
+          const k = (Math.sin(t * 0.5) * 0.5 + 0.5);
+          const from = new THREE.Vector3(0, 10, 40);
+          const to = new THREE.Vector3(0, 12, 14);
+          cam.position.lerpVectors(from, to, k);
+          cam.lookAt(0, 6 + Math.sin(t * 0.7) * 0.5, 0);
+        } else { // street flythrough
+          const r = 12;
+          cam.position.set(Math.sin(t * 0.6) * 6, 6 + Math.sin(t * 0.8), r - (t % 30));
+          cam.lookAt(0, 3, 0);
+        }
       }
       controls.update();
       if (cinematic && composerRef.current) composerRef.current.render();
@@ -161,8 +192,12 @@ export default function App() {
 
       // decay pulse and drive post fx
       pulseRef.v *= Math.pow(0.35, dt * 60 / 60);
-      if (bloomRef.current) bloomRef.current.strength = 0.7 + pulseRef.v * 0.8;
-      if (afterimageRef.current) (afterimageRef.current as any).uniforms['damp'].value = 0.86 - Math.min(0.06, pulseRef.v * 0.06);
+      if (bloomRef.current) {
+        bloomRef.current.threshold = bloomThreshold;
+        bloomRef.current.strength = bloomStrength + pulseRef.v * 0.6;
+      }
+      if (afterimageRef.current) (afterimageRef.current as any).uniforms['damp'].value = afterimageDamp - Math.min(0.06, pulseRef.v * 0.06);
+      if (rendererRef.current) rendererRef.current.toneMappingExposure = exposure + pulseRef.v * 0.04;
     };
     animate();
 
@@ -178,7 +213,7 @@ export default function App() {
   }, []);
 
   // Theme/City rebuild
-  useEffect(() => { if (sceneRef.current) { applyTheme(theme); rebuildCity(gridSize); } }, [theme, gridSize]);
+  useEffect(() => { if (sceneRef.current) { applyTheme(theme); rebuildCity(gridSize); setupFX(); } }, [theme, gridSize]);
 
   const themes = {
     neon:   { bg: 0x0b0b12, city: new THREE.Color("#1f2937"), low: new THREE.Color("#10b981"), mid: new THREE.Color("#8b5cf6"), high: new THREE.Color("#f43f5e") },
@@ -187,6 +222,45 @@ export default function App() {
     pastel: { bg: 0xf6f7fb, city: new THREE.Color("#e6ecf7"), low: new THREE.Color("#ffd1dc"), mid: new THREE.Color("#b5e5ff"), high: new THREE.Color("#c9f4c3") },
     candy:  { bg: 0xfdf5ff, city: new THREE.Color("#f6e9ff"), low: new THREE.Color("#ffb3c6"), mid: new THREE.Color("#c9b6ff"), high: new THREE.Color("#ffe29a") },
   } as const;
+
+  // FX setup: low-frequency rings and high-frequency sparks
+  function setupFX() {
+    const scene = sceneRef.current!;
+    // cleanup existing
+    lowRingsRef.current.forEach(m => scene.remove(m));
+    lowRingsRef.current = [];
+    if (sparksRef.current) { scene.remove(sparksRef.current); sparksRef.current = null; }
+
+    // Low frequency rings
+    for (let i=0;i<3;i++) {
+      const ringGeo = new THREE.RingGeometry(2 + i*1.5, 2.2 + i*1.5, 64);
+      const mat = new THREE.MeshBasicMaterial({
+        color: themes[theme].mid,
+        transparent: true,
+        opacity: 0.0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const ring = new THREE.Mesh(ringGeo, mat);
+      ring.rotation.x = -Math.PI/2; ring.position.y = 0.02 + i*0.002;
+      scene.add(ring);
+      lowRingsRef.current.push(ring);
+    }
+
+    // High frequency sparks
+    const COUNT = 1500;
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(COUNT * 3);
+    for (let i=0;i<COUNT;i++) {
+      pos[i*3+0] = (Math.random()-0.5)*40;
+      pos[i*3+1] = Math.random()*14 + 2;
+      pos[i*3+2] = (Math.random()-0.5)*40;
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const pm = new THREE.PointsMaterial({ color: themes[theme].high, size: 0.06, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const pts = new THREE.Points(g, pm);
+    sparksRef.current = pts; scene.add(pts);
+  }
 
   function applyTheme(t: keyof typeof themes) {
     const scene = sceneRef.current; if (!scene) return;
@@ -280,10 +354,17 @@ export default function App() {
     }
     mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
-    // Simple beat detection on low frequencies (bins 2..16)
-    let low = 0; let c = 0;
-    for (let i = 2; i < Math.min(16, dataArray.length); i++) { low += dataArray[i]; c++; }
-    low = (c ? low / c : 0) / 255; // 0..1
+    // Three bands (approximate)
+    const L = dataArray.length;
+    const idxClamp = (t:number)=>Math.max(0, Math.min(L-1, Math.floor(t)));
+    const lowStart = 2, lowEnd = idxClamp(L*0.08);
+    const midStart = lowEnd+1, midEnd = idxClamp(L*0.4);
+    const highStart = midEnd+1, highEnd = idxClamp(L*0.9);
+    function bandAvg(s:number,e:number){ let sum=0, c=0; for(let i=s;i<=e && i<L;i++){ sum+=dataArray[i]; c++; } return c? (sum/c)/255 : 0; }
+    const low = bandAvg(lowStart, lowEnd);
+    const mid = bandAvg(midStart, midEnd);
+    const high = bandAvg(highStart, highEnd);
+
     const st = beatState.current;
     st.avg = st.avg * 0.995 + low * 0.005; // slow moving average
     st.ema = st.ema * 0.8 + low * 0.2;    // short EMA
@@ -296,6 +377,23 @@ export default function App() {
       setTimeout(() => mesh.scale.setScalar(1), 50);
     } else {
       st.cool = Math.max(0, st.cool - 1);
+    }
+
+    // Low-band rings
+    if (lowRingsRef.current.length) {
+      lowRingsRef.current.forEach((r, i) => {
+        const s = 1 + low * (2.5 + i*1.2);
+        r.scale.setScalar(s);
+        const m = r.material as THREE.MeshBasicMaterial;
+        m.opacity = Math.max(0, Math.min(0.35, low * (0.6 - i*0.1)));
+        m.color.copy(themes[theme].mid).lerp(themes[theme].high, low*0.6);
+      });
+    }
+    // High-band sparks
+    if (sparksRef.current) {
+      const pm = sparksRef.current.material as THREE.PointsMaterial;
+      pm.opacity = Math.min(0.9, high * 1.3);
+      pm.size = 0.05 + high * 0.2;
     }
   }
 
@@ -568,6 +666,26 @@ export default function App() {
           <input type="checkbox" checked={autoCam} onChange={(e)=>setAutoCam(e.target.checked)} />
           <label className="text-xs opacity-80 ml-3">Cinematic</label>
           <input type="checkbox" checked={cinematic} onChange={(e)=>setCinematic(e.target.checked)} />
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-xs opacity-80">Exposure</label>
+          <input type="range" min={0.6} max={2.0} step={0.01} value={exposure} onChange={(e)=>setExposure(parseFloat(e.target.value))} />
+          <div className="text-xs w-10 text-right">{exposure.toFixed(2)}</div>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-xs opacity-80">Bloom</label>
+          <input type="range" min={0} max={2.0} step={0.01} value={bloomStrength} onChange={(e)=>setBloomStrength(parseFloat(e.target.value))} />
+          <div className="text-xs w-10 text-right">{bloomStrength.toFixed(2)}</div>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-xs opacity-80">Threshold</label>
+          <input type="range" min={0} max={1.0} step={0.01} value={bloomThreshold} onChange={(e)=>setBloomThreshold(parseFloat(e.target.value))} />
+          <div className="text-xs w-10 text-right">{bloomThreshold.toFixed(2)}</div>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-xs opacity-80">Afterimage</label>
+          <input type="range" min={0.75} max={0.95} step={0.005} value={afterimageDamp} onChange={(e)=>setAfterimageDamp(parseFloat(e.target.value))} />
+          <div className="text-xs w-10 text-right">{afterimageDamp.toFixed(3)}</div>
         </div>
 
         <div className="flex items-center gap-2">
