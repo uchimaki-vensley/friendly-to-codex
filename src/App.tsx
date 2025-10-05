@@ -444,7 +444,7 @@ export default function App() {
       pm.size = 0.05 + high * 0.2;
     }
 
-    // Rooftop beacons update
+    // Rooftop beacons update (align to roof including scanline boost)
     if (beaconRef.current) {
       const bmat = beaconRef.current.material as THREE.MeshBasicMaterial;
       const bd = new THREE.Object3D();
@@ -454,10 +454,16 @@ export default function App() {
       bmat.color.copy(themes[theme].high).lerp(new THREE.Color('#ffffff'), Math.min(0.5, high*0.7));
       for (let i=0;i<gridSize;i++) for (let j=0;j<gridSize;j++) {
         const id = i*gridSize + j;
-        const h = smoothRef.current ? smoothRef.current[id] : 1;
+        const h = smoothRef.current ? smoothRef.current[id] : 1; // smoothed height (next)
+        // recompute scan at this column to match building boost
+        const u = (i/(gridSize-1))*2 - 1; // -1..1 across X
+        const dscan = Math.abs(u - scanPosRef.current);
+        const scan = Math.exp(- (dscan*dscan) / (2*0.12*0.12)) * scanAmpRef.current;
+        const hBoost = scan * 2.4;
+        const roof = h + hBoost * 0.5; // building top moved by hBoost/2
         const x = i*spacing - offset; const z = j*spacing - offset;
         const s = 0.6 + glow * 0.8;
-        bd.position.set(x, h + 0.35, z);
+        bd.position.set(x, roof + 0.35, z); // center of beacon is +0.35 (half beacon height)
         bd.scale.set(0.6, s, 0.6); bd.updateMatrix();
         beaconRef.current.setMatrixAt(id, bd.matrix);
       }
