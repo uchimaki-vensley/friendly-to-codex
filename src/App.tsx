@@ -2,6 +2,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js'
+import { Reflector } from 'three/examples/jsm/objects/Reflector.js'
 
 type Meta = { title?: string; artist?: string; album?: string; duration?: number };
 
@@ -34,6 +39,12 @@ export default function App() {
   const controlsRef = useRef<OrbitControls | null>(null);
   const cityRef = useRef<THREE.InstancedMesh | null>(null);
   const rafRef = useRef<number | null>(null);
+  // Post-processing
+  const composerRef = useRef<EffectComposer | null>(null);
+  const bloomRef = useRef<UnrealBloomPass | null>(null);
+  const afterimageRef = useRef<AfterimagePass | null>(null);
+  // Ground reflector
+  const reflectorRef = useRef<THREE.Mesh | null>(null);
 
   // Audio/WebAudio
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -56,6 +67,8 @@ export default function App() {
   const [rotateCity] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [errMsg, setErrMsg] = useState<string>("");
+  const [autoCam, setAutoCam] = useState(true);
+  const [cinematic, setCinematic] = useState(true);
 
   // Optional: music-metadata-browser (lazy import; no top-level await)
   const mmRef = useRef<any>(null);
@@ -86,11 +99,24 @@ export default function App() {
     controlsRef.current = controls;
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.35); dir.position.set(10,20,10); scene.add(dir);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(10,20,10); scene.add(dir);
+    scene.fog = new THREE.Fog(0x04040a, 40, 140);
 
     applyTheme(theme);
     buildCity(gridSize);
+
+    // Post-processing pipeline
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(mount.clientWidth, mount.clientHeight), 0.8, 0.6, 0.85);
+    const afterimage = new AfterimagePass(0.85);
+    composer.addPass(renderPass);
+    composer.addPass(bloom);
+    composer.addPass(afterimage);
+    composerRef.current = composer;
+    bloomRef.current = bloom;
+    afterimageRef.current = afterimage;
 
     const onResize = () => {
       if (!rendererRef.current || !cameraRef.current || !mountRef.current) return;
@@ -98,14 +124,36 @@ export default function App() {
       rendererRef.current.setSize(clientWidth, clientHeight);
       cameraRef.current.aspect = clientWidth / clientHeight;
       cameraRef.current.updateProjectionMatrix();
+      composerRef.current?.setSize(clientWidth, clientHeight);
     };
     window.addEventListener('resize', onResize);
 
+    let t0 = performance.now();
+    const pulseRef = { v: 0 };
     const animate = () => {
       rafRef.current = requestAnimationFrame(animate);
-      tickCity();
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - t0) / 1000);
+      t0 = now;
+      tickCity(pulseRef);
+
+      if (autoCam && cameraRef.current && sceneRef.current) {
+        const cam = cameraRef.current;
+        const r = 26 + Math.sin(now * 0.0003) * 3;
+        const yaw = now * 0.00025;
+        cam.position.x = Math.cos(yaw) * r;
+        cam.position.z = Math.sin(yaw) * r;
+        cam.position.y = 18 + Math.sin(now * 0.00042) * 3;
+        cam.lookAt(0, 6, 0);
+      }
       controls.update();
-      renderer.render(scene, camera);
+      if (cinematic && composerRef.current) composerRef.current.render();
+      else renderer.render(scene, camera);
+
+      // decay pulse and drive post fx
+      pulseRef.v *= Math.pow(0.35, dt * 60 / 60);
+      if (bloomRef.current) bloomRef.current.strength = 0.7 + pulseRef.v * 0.8;
+      if (afterimageRef.current) (afterimageRef.current as any).uniforms['damp'].value = 0.86 - Math.min(0.06, pulseRef.v * 0.06);
     };
     animate();
 
@@ -134,14 +182,19 @@ export default function App() {
     const pal = themes[t];
     scene.background = new THREE.Color(pal.bg);
     scene.fog = new THREE.Fog(pal.bg, 40, 140);
-    // Ground
-    let ground = scene.getObjectByName("__ground") as THREE.Mesh | null;
-    if (!ground) {
-      ground = new THREE.Mesh(new THREE.PlaneGeometry(200,200), new THREE.MeshStandardMaterial({ color: pal.city, metalness:0.2, roughness:0.8 }));
-      ground.name = "__ground"; ground.rotation.x = -Math.PI/2; scene.add(ground);
-    } else {
-      (ground.material as THREE.MeshStandardMaterial).color.copy(pal.city);
-    }
+    // Reflective ground
+    const prev = scene.getObjectByName("__ground"); if (prev) scene.remove(prev);
+    const geo = new THREE.PlaneGeometry(200, 200);
+    const reflector = new Reflector(geo, {
+      clipBias: 0.003,
+      textureWidth: Math.floor((rendererRef.current?.domElement.width || 1024)),
+      textureHeight: Math.floor((rendererRef.current?.domElement.height || 1024)),
+      color: new THREE.Color(pal.bg).multiplyScalar(0.6)
+    }) as unknown as THREE.Mesh;
+    reflector.name = "__ground";
+    reflector.rotation.x = -Math.PI / 2;
+    scene.add(reflector);
+    reflectorRef.current = reflector;
   }
 
   function buildCity(N: number) {
@@ -180,7 +233,8 @@ export default function App() {
 
   // Visual tick
   const smoothRef = useRef<Float32Array | null>(null);
-  function tickCity() {
+  const beatState = useRef({ avg: 0, ema: 0, cool: 0 });
+  function tickCity(pulse?: { v: number }) {
     const mesh = cityRef.current; const analyser = analyserRef.current; const dataArray = dataArrayRef.current;
     if (!mesh) return;
     if (rotateCity) mesh.rotation.y += 0.0018;
@@ -214,6 +268,24 @@ export default function App() {
       mesh.setColorAt?.(idx, col);
     }
     mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+    // Simple beat detection on low frequencies (bins 2..16)
+    let low = 0; let c = 0;
+    for (let i = 2; i < Math.min(16, dataArray.length); i++) { low += dataArray[i]; c++; }
+    low = (c ? low / c : 0) / 255; // 0..1
+    const st = beatState.current;
+    st.avg = st.avg * 0.995 + low * 0.005; // slow moving average
+    st.ema = st.ema * 0.8 + low * 0.2;    // short EMA
+    const over = st.ema > Math.max(0.08, st.avg * 1.15);
+    if (st.cool <= 0 && over) {
+      st.cool = 10; // frames cooldown
+      if (pulse) pulse.v = Math.min(1, (pulse.v || 0) + 0.9);
+      // city gentle pop
+      mesh.scale.setScalar(1 + 0.015);
+      setTimeout(() => mesh.scale.setScalar(1), 50);
+    } else {
+      st.cool = Math.max(0, st.cool - 1);
+    }
   }
 
   // Playback graph helpers
@@ -478,6 +550,13 @@ export default function App() {
           <label className="text-xs opacity-80">Sensitivity</label>
           <input type="range" min={0.3} max={2.5} step={0.1} value={sensitivity} onChange={(e)=>setSensitivity(parseFloat(e.target.value))} />
           <div className="text-xs w-8 text-right">{sensitivity.toFixed(1)}</div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <label className="text-xs opacity-80">Auto Cam</label>
+          <input type="checkbox" checked={autoCam} onChange={(e)=>setAutoCam(e.target.checked)} />
+          <label className="text-xs opacity-80 ml-3">Cinematic</label>
+          <input type="checkbox" checked={cinematic} onChange={(e)=>setCinematic(e.target.checked)} />
         </div>
 
         <div className="flex items-center gap-2">
