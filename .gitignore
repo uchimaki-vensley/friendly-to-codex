@@ -1,0 +1,32 @@
+# Node / Vite
+node_modules/
+dist/
+.cache/
+.vite/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Tests/Coverage
+coverage/
+
+# Docker/Runtime
+.tmp/
+
+# Ignore nested sample project (avoid duplicate repo)
+/friendly-to-codex/

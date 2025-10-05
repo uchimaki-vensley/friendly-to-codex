@@ -1,0 +1,32 @@
+html,body,#root { height: 100%; margin: 0; }
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+.h-screen { height: 100vh; }
+.bg-black { background: #000; }
+.text-white { color: #fff; }
+.relative { position: relative; }
+.absolute { position: absolute; }
+.left-4 { left: 1rem; }
+.top-4 { top: 1rem; }
+.rounded-2xl { border-radius: 1rem; }
+.p-4 { padding: 1rem; }
+.space-y-3 > * + * { margin-top: .75rem; }
+.shadow-lg { box-shadow: 0 10px 25px rgba(0,0,0,0.6); }
+.text-sm { font-size: .875rem; }
+.text-xs { font-size: .75rem; }
+.opacity-80 { opacity: .8; }
+.opacity-70 { opacity: .7; }
+.opacity-60 { opacity: .6; }
+.block { display: block; }
+.flex { display: flex; }
+.items-center { align-items: center; }
+.gap-2 { gap: .5rem; }
+.gap-3 { gap: .75rem; }
+.rounded-lg { border-radius: .5rem; }
+.px-3 { padding-left: .75rem; padding-right: .75rem; }
+.py-1 { padding-top: .25rem; padding-bottom: .25rem; }
+.bg-white\/10 { background: rgba(255,255,255,0.1); }
+.hover\:bg-white\/20:hover { background: rgba(255,255,255,0.2); }
+.text-right { text-align: right; }
+.mt-1 { margin-top: .25rem; }
+.text-red-400 { color: #f87171; }
