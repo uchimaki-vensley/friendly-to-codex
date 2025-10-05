@@ -330,7 +330,10 @@ export default function App() {
       bd.scale.set(0.6, 0.6, 0.6); bd.updateMatrix();
       beacons.setMatrixAt(id, bd.matrix);
     }
-    beaconRef.current = beacons; scene.add(beacons);
+    beaconRef.current = beacons;
+    // parent beacons to city so they inherit rotation/transform
+    if (cityRef.current) cityRef.current.add(beacons);
+    else scene.add(beacons);
   }
 
   function rebuildCity(N: number) {
@@ -342,7 +345,8 @@ export default function App() {
       cityRef.current = null;
     }
     if (beaconRef.current) {
-      scene.remove(beaconRef.current);
+      // detach from parent (city) safely
+      if (beaconRef.current.parent) beaconRef.current.parent.remove(beaconRef.current);
       beaconRef.current.geometry.dispose();
       (beaconRef.current.material as THREE.Material).dispose?.();
       beaconRef.current = null;
