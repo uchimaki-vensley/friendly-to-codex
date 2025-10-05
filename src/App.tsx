@@ -1,4 +1,4 @@
-// Converted from provided main.ts — adjusted for module layout (React + Vite)
+﻿// Converted from provided main.ts 窶・adjusted for module layout (React + Vite)
 import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
@@ -23,7 +23,7 @@ function pickFinite(...vals: Array<number | undefined | null>): number | undefin
   return undefined;
 }
 
-const THEMES = ["neon", "sunset", "aqua"] as const;
+const THEMES = ["neon", "sunset", "aqua", "pastel", "candy"] as const;
 type ThemeKey = typeof THEMES[number];
 const isTheme = (v: string): v is ThemeKey => (THEMES as readonly string[]).includes(v);
 
@@ -63,7 +63,7 @@ export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [gridSize, setGridSize] = useState(18);
   const [sensitivity, setSensitivity] = useState(1.0);
-  const [theme, setTheme] = useState<ThemeKey>("neon");
+  const [theme, setTheme] = useState<ThemeKey>("pastel");
   const [rotateCity] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [errMsg, setErrMsg] = useState<string>("");
@@ -84,6 +84,10 @@ export default function App() {
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     // @ts-ignore
     renderer.outputColorSpace = (THREE as any).SRGBColorSpace || (renderer as any).outputColorSpace;
+    // Brighter look with tone mapping
+    // @ts-ignore
+    renderer.toneMapping = (THREE as any).ACESFilmicToneMapping || THREE.NoToneMapping;
+    renderer.toneMappingExposure = 1.25;
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -99,8 +103,8 @@ export default function App() {
     controlsRef.current = controls;
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(10,20,10); scene.add(dir);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(10,20,10); scene.add(dir);
     scene.fog = new THREE.Fog(0x04040a, 40, 140);
 
     applyTheme(theme);
@@ -109,7 +113,12 @@ export default function App() {
     // Post-processing pipeline
     const composer = new EffectComposer(renderer);
     const renderPass = new RenderPass(scene, camera);
-    const bloom = new UnrealBloomPass(new THREE.Vector2(mount.clientWidth, mount.clientHeight), 0.8, 0.6, 0.85);
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(mount.clientWidth, mount.clientHeight),
+      0.95, // strength
+      0.55, // radius
+      0.6   // threshold (lower to glow more)
+    );
     const afterimage = new AfterimagePass(0.85);
     composer.addPass(renderPass);
     composer.addPass(bloom);
@@ -172,9 +181,11 @@ export default function App() {
   useEffect(() => { if (sceneRef.current) { applyTheme(theme); rebuildCity(gridSize); } }, [theme, gridSize]);
 
   const themes = {
-    neon: { bg: 0x07070b, city: new THREE.Color("#1f2937"), low: new THREE.Color("#10b981"), mid: new THREE.Color("#8b5cf6"), high: new THREE.Color("#f43f5e") },
-    sunset:{ bg: 0x0b0a10, city: new THREE.Color("#3f2e2e"), low: new THREE.Color("#f59e0b"), mid: new THREE.Color("#ef4444"), high: new THREE.Color("#fb7185") },
-    aqua:  { bg: 0x020617, city: new THREE.Color("#0f172a"), low: new THREE.Color("#22d3ee"), mid: new THREE.Color("#60a5fa"), high: new THREE.Color("#93c5fd") },
+    neon:   { bg: 0x0b0b12, city: new THREE.Color("#1f2937"), low: new THREE.Color("#10b981"), mid: new THREE.Color("#8b5cf6"), high: new THREE.Color("#f43f5e") },
+    sunset: { bg: 0x121017, city: new THREE.Color("#3f2e2e"), low: new THREE.Color("#f59e0b"), mid: new THREE.Color("#ef4444"), high: new THREE.Color("#fb7185") },
+    aqua:   { bg: 0x0b1020, city: new THREE.Color("#0f172a"), low: new THREE.Color("#22d3ee"), mid: new THREE.Color("#60a5fa"), high: new THREE.Color("#93c5fd") },
+    pastel: { bg: 0xf6f7fb, city: new THREE.Color("#e6ecf7"), low: new THREE.Color("#ffd1dc"), mid: new THREE.Color("#b5e5ff"), high: new THREE.Color("#c9f4c3") },
+    candy:  { bg: 0xfdf5ff, city: new THREE.Color("#f6e9ff"), low: new THREE.Color("#ffb3c6"), mid: new THREE.Color("#c9b6ff"), high: new THREE.Color("#ffe29a") },
   } as const;
 
   function applyTheme(t: keyof typeof themes) {
@@ -189,7 +200,7 @@ export default function App() {
       clipBias: 0.003,
       textureWidth: Math.floor((rendererRef.current?.domElement.width || 1024)),
       textureHeight: Math.floor((rendererRef.current?.domElement.height || 1024)),
-      color: new THREE.Color(pal.bg).multiplyScalar(0.6)
+      color: new THREE.Color(pal.bg).multiplyScalar(0.85)
     }) as unknown as THREE.Mesh;
     reflector.name = "__ground";
     reflector.rotation.x = -Math.PI / 2;
@@ -523,7 +534,7 @@ export default function App() {
 
       {/* Overlay */}
       <div className="absolute left-4 top-4 bg-black/60 backdrop-blur-sm rounded-2xl p-4 space-y-3 shadow-lg">
-        <div className="text-sm opacity-80">音の街ビジュアライザー</div>
+        <div className="text-sm opacity-80">髻ｳ縺ｮ陦励ン繧ｸ繝･繧｢繝ｩ繧､繧ｶ繝ｼ</div>
 
         <div className="flex items-center gap-2">
           <input
@@ -542,7 +553,7 @@ export default function App() {
           >
             {playing ? 'Pause' : 'Play'}
           </button>
-          <button className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-sm" onClick={runSelfTest}>Self‑Test</button>
+          <button className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-sm" onClick={runSelfTest}>Self窶禅est</button>
           <button className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-sm" onClick={runDevTests}>Run Tests</button>
         </div>
 
@@ -571,15 +582,16 @@ export default function App() {
             <option value="neon">Neon</option>
             <option value="sunset">Sunset</option>
             <option value="aqua">Aqua</option>
+            <option value="pastel">Pastel</option>
+            <option value="candy">Candy</option>
           </select>
         </div>
 
         <div className="text-[10px] opacity-60">
-          {fileName ? `Loaded: ${fileName}` : "mp3をドラッグ&ドロップ or クリックで選択 → Play ▶"}
+          {fileName ? `Loaded: ${fileName}` : "mp3をドラッグ＆ドロップ or クリックで選択 → Play ▶"}
           {meta && (
-            <div className="mt-1 opacity-70">
-              {meta.title && <span>『{meta.title}』</span>} {meta.artist && <span>- {meta.artist}</span>}
-              {meta.album && <span> / {meta.album}</span>} {timeStr && <span> · {timeStr}</span>}
+            <div className="mt-1 opacity-70">              {meta.title && <span>[{meta.title}]</span>} {meta.artist && <span>- {meta.artist}</span>}
+              {meta.album && <span> / {meta.album}</span>} {timeStr && <span> | {timeStr}</span>}
             </div>
           )}
           {errMsg && <div className="mt-1 text-red-400">{errMsg}</div>}
