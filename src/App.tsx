@@ -48,6 +48,7 @@ export default function App() {
   // FX objects
   const lowRingsRef = useRef<THREE.Mesh[]>([]);
   const sparksRef = useRef<THREE.Points | null>(null);
+  const ringBurstRef = useRef<number>(0);
 
   // Audio/WebAudio
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -190,6 +191,12 @@ export default function App() {
       if (cinematic && composerRef.current) composerRef.current.render();
       else renderer.render(scene, camera);
 
+      if (sparksRef.current) {
+        const nowSec = now * 0.001;
+        sparksRef.current.rotation.y += 0.0025;
+        sparksRef.current.position.y = 0.5 + Math.sin(nowSec * 1.8) * 0.3;
+      }
+
       // decay pulse and drive post fx
       pulseRef.v *= Math.pow(0.35, dt * 60 / 60);
       if (bloomRef.current) {
@@ -219,8 +226,8 @@ export default function App() {
     neon:   { bg: 0x0b0b12, city: new THREE.Color("#1f2937"), low: new THREE.Color("#10b981"), mid: new THREE.Color("#8b5cf6"), high: new THREE.Color("#f43f5e") },
     sunset: { bg: 0x121017, city: new THREE.Color("#3f2e2e"), low: new THREE.Color("#f59e0b"), mid: new THREE.Color("#ef4444"), high: new THREE.Color("#fb7185") },
     aqua:   { bg: 0x0b1020, city: new THREE.Color("#0f172a"), low: new THREE.Color("#22d3ee"), mid: new THREE.Color("#60a5fa"), high: new THREE.Color("#93c5fd") },
-    pastel: { bg: 0xf6f7fb, city: new THREE.Color("#e6ecf7"), low: new THREE.Color("#ffd1dc"), mid: new THREE.Color("#b5e5ff"), high: new THREE.Color("#c9f4c3") },
-    candy:  { bg: 0xfdf5ff, city: new THREE.Color("#f6e9ff"), low: new THREE.Color("#ffb3c6"), mid: new THREE.Color("#c9b6ff"), high: new THREE.Color("#ffe29a") },
+    pastel: { bg: 0xEAEFF7, city: new THREE.Color("#D4DCEC"), low: new THREE.Color("#FFB3C6"), mid: new THREE.Color("#A6D8FF"), high: new THREE.Color("#B8F5B0") },
+    candy:  { bg: 0xFBE8FF, city: new THREE.Color("#F2D7FF"), low: new THREE.Color("#FF7699"), mid: new THREE.Color("#C6A4FF"), high: new THREE.Color("#FFD36B") },
   } as const;
 
   // FX setup: low-frequency rings and high-frequency sparks
@@ -277,7 +284,6 @@ export default function App() {
       color: new THREE.Color(pal.bg).multiplyScalar(0.85)
     }) as unknown as THREE.Mesh;
     reflector.name = "__ground";
-    reflector.rotation.x = -Math.PI / 2;
     scene.add(reflector);
     reflectorRef.current = reflector;
   }
@@ -368,10 +374,11 @@ export default function App() {
     const st = beatState.current;
     st.avg = st.avg * 0.995 + low * 0.005; // slow moving average
     st.ema = st.ema * 0.8 + low * 0.2;    // short EMA
-    const over = st.ema > Math.max(0.08, st.avg * 1.15);
+    const over = st.ema > Math.max(0.12, st.avg * 1.35);
     if (st.cool <= 0 && over) {
-      st.cool = 10; // frames cooldown
+      st.cool = 12; // frames cooldown (stricter)
       if (pulse) pulse.v = Math.min(1, (pulse.v || 0) + 0.9);
+      ringBurstRef.current = Math.min(1, ringBurstRef.current + 1);
       // city gentle pop
       mesh.scale.setScalar(1 + 0.015);
       setTimeout(() => mesh.scale.setScalar(1), 50);
@@ -379,21 +386,26 @@ export default function App() {
       st.cool = Math.max(0, st.cool - 1);
     }
 
-    // Low-band rings
+    // Low-band rings: burst-based
+    ringBurstRef.current *= 0.86; // decay
     if (lowRingsRef.current.length) {
       lowRingsRef.current.forEach((r, i) => {
-        const s = 1 + low * (2.5 + i*1.2);
+        const burst = ringBurstRef.current;
+        const s = 1 + (low * 0.4 + burst) * (3.2 + i*1.4);
         r.scale.setScalar(s);
         const m = r.material as THREE.MeshBasicMaterial;
-        m.opacity = Math.max(0, Math.min(0.35, low * (0.6 - i*0.1)));
-        m.color.copy(themes[theme].mid).lerp(themes[theme].high, low*0.6);
+        m.opacity = Math.max(0, Math.min(0.6, (low * 0.3 + burst) * (0.8 - i*0.12)));
+        m.color.copy(themes[theme].mid).lerp(themes[theme].high, Math.min(1, low*0.4 + burst*0.8));
       });
     }
-    // High-band sparks
+    // High-band sparks: brighter, larger, bit of randomness
     if (sparksRef.current) {
       const pm = sparksRef.current.material as THREE.PointsMaterial;
-      pm.opacity = Math.min(0.9, high * 1.3);
-      pm.size = 0.05 + high * 0.2;
+      const sparkle = Math.pow(high, 0.9) * 1.6 + (Math.random()*0.25)*high + (pulse?.v || 0)*0.2;
+      pm.opacity = Math.max(0, Math.min(1, sparkle));
+      pm.size = 0.08 + high * 0.35 + (pulse?.v || 0) * 0.05;
+      const c = (pm.color as THREE.Color);
+      c.lerpColors(themes[theme].high, new THREE.Color('#ffffff'), Math.min(0.7, high*0.8));
     }
   }
 
